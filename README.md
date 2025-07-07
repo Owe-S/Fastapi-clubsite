@@ -1,0 +1,112 @@
+# ClubSite CMS – API Adminstruktur og Dokumentasjon
+
+(Dokumentasjon som før – alt fra forrige melding...)
+
+---
+
+## FULL ADMIN-STRUKTUR (.json)
+
+Her er **hele datastrukturen** som brukes til å modellere og dokumentere API-et:
+
+```json
+{
+  "nyheter": {
+    "url": "https://skigk.no/csadmin/news",
+    "tabellkolonner": [
+      "Publ", "Vis", "Heading", "Avdeling", "Pri", "Vedl", "Fra", "Varighet", "Av"
+    ],
+    "søkevalg": [
+      {"label": "Begrens til avdeling", "type": "dropdown"},
+      {"label": "Søk", "type": "text"}
+    ],
+    "sidepaginering": true,
+    "handlinger": ["Vis artikkel", "Rediger", "Opprett ny", "Filtrer"],
+    "beskrivelse": "Oversikt over alle nyhetsartikler. Kan filtreres og søkes. Rader kan åpnes for redigering. Inneholder heading, avdeling, datoer, status og forfatter."
+  },
+  "undersider": {
+    "url": "https://skigk.no/csadmin/pages",
+    "tabellkolonner": [
+      "Pri", "Vis", "Sort", "Heading på undemenu", "Sider", "Oppd", "Opprettet", "Av", "Slett"
+    ],
+    "underseksjon": {
+      "heading": "Sider - Klubb",
+      "kolonner": [
+        "Pri", "Vis", "Sort", "Navn på side", "Dir", "Mod", "Vedl", "Opprettet", "Av", "Slett"
+      ]
+    },
+    "inputfelt": [
+      {"label": "Legg til meny/heading", "type": "text"}
+    ],
+    "handlinger": ["Opprett ny side", "Rediger", "Slett", "Vis side"],
+    "beskrivelse": "Administrasjon av hierarkiske sider og menyer. Mulighet for å opprette, endre og sortere sider."
+  },
+  "bilder": {
+    "url": "https://skigk.no/csadmin/images?categoryID=0",
+    "filtre": [
+      {"label": "Kategorier", "type": "dropdown"},
+      {"label": "Dato", "type": "date"}
+    ],
+    "dropdown": {"label": "Avdeling", "type": "dropdown"},
+    "mappestruktur": true,
+    "handlinger": ["Last opp fil", "Vis", "Slett", "Sorter"],
+    "beskrivelse": "Bildearkiv med mappestruktur og kategorisering. Kan filtrere på avdeling og dato. Opplasting og administrasjon av bilder."
+  },
+  "dokumenter": {
+    "url": "https://skigk.no/csadmin/documents",
+    "mappestruktur": [
+      "Toppnivå",
+      "Jubileumsfestt",
+      "Turneringer",
+      "Vedlegg",
+      "Årsmøter"
+    ],
+    "tabellkolonner": [
+      "Type", "Info", "Beskrivelse", "Filnavn", "", "Lastet opp", "Slett"
+    ],
+    "handlinger": [
+      "Last opp dokument",
+      "Rediger beskrivelse",
+      "Slett dokument",
+      "Opprett mappe"
+    ],
+    "beskrivelse": "Filarkiv med støtte for mapper, metadata, opplasting og sletting. Enkel filbehandling og oversikt."
+  },
+  "sidemal": {
+    "url": "https://skigk.no/csadmin/template_sub",
+    "faner": [
+      "Plassering", "Elementliste", "Nytt element"
+    ],
+    "områder": [
+      "Header", "Subheader", "Toppelement", "Innhold", "Kolonne", "Bunnelement", "Footer"
+    ],
+    "handlinger": [
+      "Plasser widget",
+      "Opprett nytt element",
+      "Sorter rekkefølge"
+    ],
+    "beskrivelse": "Oppsett for sidemaler med drag-and-drop for widget-plassering. Gir oversikt over hvilke seksjoner hver side kan bestå av."
+  },
+  "startside": {
+    "url": "https://skigk.no/csadmin/",
+    "paneler": [
+      {
+        "tittel": "Siste 5 nyheter",
+        "kolonner": ["Heading", "Avdeling", "Utgår"]
+      },
+      {
+        "tittel": "Siste 5 undersider",
+        "kolonner": ["Tittel", "Avdeling", "Oppdatert"]
+      },
+      {
+        "tittel": "Siste innmelding/utmelding",
+        "kolonner": ["Dato", "Navn", "Inn/Ut", "Kategori"]
+      }
+    ],
+    "panel_funksjoner": [
+      "Gå til artikkel/side",
+      "Oppdatert status",
+      "Se flere"
+    ],
+    "beskrivelse": "Dashboard/oversikt med de siste oppdateringer på tvers av moduler."
+  }
+}
