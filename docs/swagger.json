@@ -1,0 +1,21 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ClubSite CMS API",
+    "version": "1.0.0",
+    "description": "Automatically generated OpenAPI spec for ClubSite CMS"
+  },
+  "servers": [
+    {
+      "url": "https://api.clubsitecms.no/v1",
+      "description": "Production"
+    },
+    {
+      "url": "http://localhost:8000/v1",
+      "description": "Local Dev"
+    }
+  ],
+  "paths": {},
+  "components": {},
+  "tags": []
+}
