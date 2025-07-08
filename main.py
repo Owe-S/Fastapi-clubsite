@@ -1,222 +1,250 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
+from sqlalchemy import text, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta
+import re
+
+import os
+from fastapi import UploadFile
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+
+from database import AsyncSessionLocal
+from models import NewsArticle, SiteUser
+
+# ----------------- APP CONFIG -----------------
 
 app = FastAPI(
     title="ClubSite Admin Struktur API",
     description="""
-    Komplett API-dokumentasjon og datastruktur for adminpanelet i ClubSite.
-    Dette API-et gir frontend- og app-utviklere *nøyaktig innsikt* i tabellene, menyene og funksjonene som finnes for de viktigste admin-modulene.
+    Komplett API + OAuth2/JWT-autentisering (med midlertidig test-bruker) og CRUD for News.
     """,
-    version="2.0"
+    version="3.2"
 )
 
-# ------------------ FELTMODELLER ------------------
+# ------------- SECURITY CONFIG -----------------
 
-class TableCell(BaseModel):
-    tekst: Optional[str] = None
-    href: Optional[str] = None
-    type: Optional[str] = None
-    placeholder: Optional[str] = None
-    funksjon: Optional[str] = None
+SECRET_KEY = "en-veldig-lang-og-tilfeldig-streng"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-class TableRow(BaseModel):
-    celler: List[TableCell]
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-class TableModel(BaseModel):
-    url: str
-    kolonner: List[str]
-    rader: List[TableRow]
+# ---------------- Pydantic-modeller --------------
 
-class MenuLink(BaseModel):
-    navn: str
-    url: str
-    ikoner: Optional[List[str]] = None
-    underpunkter: Optional[List['MenuLink']] = None
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
-MenuLink.update_forward_refs()
+class TokenData(BaseModel):
+    username: Optional[str] = None
 
-class PageModel(BaseModel):
-    navn: str
-    url: str
-    beskrivelse: Optional[str]
-    meny: List[MenuLink]
-    tabeller: List[TableModel]
+class NewsOut(BaseModel):
+    articleID: int
+    heading: str
+    ingress: Optional[str]
+    validfrom: datetime
+    validto: datetime
+    boolPubl: bool
+    author: Optional[str] = None
+    template: Optional[int] = None
+    videoUrl: Optional[str] = None
 
-# --------------- FAKTISKE DATA (EKSTRAHERT) ---------------
+    class Config:
+        from_attributes = True
 
-# Hovedmeny for admin
-main_menu = [
-    MenuLink(navn="Nyheter", url="/admin/news"),
-    MenuLink(navn="Undersider", url="/admin/pages"),
-    MenuLink(navn="Bilder", url="/admin/images"),
-    MenuLink(navn="Dokumenter", url="/admin/documents"),
-    MenuLink(navn="Sidemal", url="/admin/template_sub"),
-]
+class NewsIn(BaseModel):
+    depID: int
+    heading: str
+    ingress: Optional[str]
+    newscontent: Optional[str]
+    validfrom: datetime
+    validto: datetime
+    boolPubl: bool
+    author: Optional[str] = None
+    template: Optional[int] = None
+    videoUrl: Optional[str] = None
 
-# 1. NYHETER
-nyheter_tabell = TableModel(
-    url="https://skigk.no/csadmin/news",
-    kolonner=[
-        "ID", "Vis", "Sort", "Tittel", "Avdeling", "Publisert", "Utløpsdato", "Opprettet", "Forfatter", "Handling"
-    ],
-    rader=[
-        TableRow(celler=[
-            TableCell(tekst="81", type="int", placeholder="ID"),
-            TableCell(tekst="", href="files_news/aj_news_action?mission=showarticle&articleID=2630", funksjon="Vis artikkel"),
-            TableCell(tekst="", funksjon="Sortering"),
-            TableCell(tekst="Siste innspurt – din gave dobles! Dine 200,- blir til 400,-", href="news?show=edit&articleID=2630", type="tekst", placeholder="Tittel"),
-            TableCell(tekst="Klubb", type="tekst", placeholder="Avdeling"),
-            TableCell(tekst="", funksjon="Publiser/Avpubliser"),
-            TableCell(tekst="24.06.2025", type="dato", placeholder="Publiseringsdato"),
-            TableCell(tekst="26.06.2025", type="dato", placeholder="Utløpsdato"),
-            TableCell(tekst="Owe Stangeland", type="tekst", placeholder="Forfatter"),
-            TableCell(tekst="", funksjon="Rediger/Slett")
-        ]),
-        # Flere rader kan legges til her...
-    ]
-)
+# Struktur-modeller (TableCell, TableRow, TableModel, MenuLink, PageModel) og data…
+# (kopier inn dine eksisterende structure-endepunkter her)
 
-nyheter_page = PageModel(
-    navn="Nyheter",
-    url="/admin/news",
-    beskrivelse="Modul for å publisere og administrere nyhetsartikler i ClubSite admin.",
-    meny=main_menu,
-    tabeller=[nyheter_tabell]
-)
+# ----------------- DEPENDENCIES -----------------
 
-# 2. UNDERSIDER
-undersider_tabell = TableModel(
-    url="https://skigk.no/csadmin/pages",
-    kolonner=[
-        "Pri", "Vis", "Sort", "Navn på side", "Hjem", "Dir", "Mod", "Vedl", "Opprettet", "Av", "Slett"
-    ],
-    rader=[
-        TableRow(celler=[
-            TableCell(tekst="1", type="int", placeholder="Prioritet"),
-            TableCell(tekst="", href="files_pages/aj_pages_action?mission=showpage&menuID=9&pageID=96", funksjon="Vis side"),
-            TableCell(tekst="", funksjon="Sortering"),
-            TableCell(tekst="Ski Cup – Singel Match Play 2025", href="pages?show=edit&pageID=96", type="tekst", placeholder="Tittel"),
-            TableCell(tekst="", funksjon="Hjem"),
-            TableCell(tekst="", funksjon="Dir"),
-            TableCell(tekst="", funksjon="Mod"),
-            TableCell(tekst="1", funksjon="Vedlegg"),
-            TableCell(tekst="20.05.2025", type="dato", placeholder="Opprettet"),
-            TableCell(tekst="Owe Stangeland", type="tekst", placeholder="Forfatter"),
-            TableCell(tekst="", funksjon="Slett"),
-        ]),
-        # Flere rader...
-    ]
-)
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        yield session
 
-undersider_page = PageModel(
-    navn="Undersider",
-    url="/admin/pages",
-    beskrivelse="Administrer undersider/innholdssider i nettstedet.",
-    meny=main_menu,
-    tabeller=[undersider_tabell]
-)
+def verify_password(plain_pw: str, hashed_pw: str) -> bool:
+    return pwd_context.verify(plain_pw, hashed_pw)
 
-# 3. BILDER
-bilder_tabell = TableModel(
-    url="https://skigk.no/csadmin/images?categoryID=0",
-    kolonner=["#", "Bilde", "Filnavn", "Kategori", "Opplastet", "Størrelse", "Dimensjoner", "Brukes i", "Slett"],
-    rader=[
-        # Eksempelrad – fyll ut flere fra scraping senere!
-        TableRow(celler=[
-            TableCell(tekst="1"),
-            TableCell(tekst="", funksjon="Vis bilde"),
-            TableCell(tekst="bilde1.jpg", type="tekst", placeholder="Filnavn"),
-            TableCell(tekst="Profilbilder", type="tekst", placeholder="Kategori"),
-            TableCell(tekst="26.06.2025", type="dato", placeholder="Opplastet"),
-            TableCell(tekst="45KB", type="tekst", placeholder="Størrelse"),
-            TableCell(tekst="800x600", type="tekst", placeholder="Dimensjoner"),
-            TableCell(tekst="Nyheter", type="tekst", placeholder="Brukes i"),
-            TableCell(tekst="", funksjon="Slett")
-        ])
-    ]
-)
-bilder_page = PageModel(
-    navn="Bilder",
-    url="/admin/images",
-    beskrivelse="Opplasting og organisering av bilder og illustrasjoner.",
-    meny=main_menu,
-    tabeller=[bilder_tabell]
-)
+async def get_user(session: AsyncSession, username: str) -> Optional[SiteUser]:
+    if username == "API-Test":
+        user = SiteUser()
+        user.userName = "API-Test"
+        return user
+    result = await session.execute(
+        select(SiteUser).where(SiteUser.userName == username)
+    )
+    return result.scalar_one_or_none()
 
-# 4. DOKUMENTER
-dokumenter_tabell = TableModel(
-    url="https://skigk.no/csadmin/documents",
-    kolonner=["Type", "Info", "Beskrivelse", "Filnavn", "", "Lastet opp", "Slett"],
-    rader=[
-        TableRow(celler=[
-            TableCell(tekst="PDF", type="tekst", placeholder="Filtype"),
-            TableCell(tekst="Styremøte referat", type="tekst", placeholder="Info"),
-            TableCell(tekst="Referat fra styremøte 24.06.2025", type="tekst", placeholder="Beskrivelse"),
-            TableCell(tekst="styremote_2025.pdf", type="tekst", placeholder="Filnavn"),
-            TableCell(tekst="", funksjon="Last ned"),
-            TableCell(tekst="24.06.2025", type="dato", placeholder="Lastet opp"),
-            TableCell(tekst="", funksjon="Slett")
-        ]),
-        # Flere rader...
-    ]
-)
-dokumenter_page = PageModel(
-    navn="Dokumenter",
-    url="/admin/documents",
-    beskrivelse="Laste opp, organisere og slette dokumenter og filer.",
-    meny=main_menu,
-    tabeller=[dokumenter_tabell]
-)
+async def authenticate_user(session: AsyncSession, username: str, password: str):
+    if username == "API-Test" and password == "UtvidetTest2025!":
+        return await get_user(session, username)
+    user = await get_user(session, username)
+    if not user or not verify_password(password, user.pwdHash or ""):
+        return None
+    return user
 
-# 5. SIDEMAL
-sidemal_tabell = TableModel(
-    url="https://skigk.no/csadmin/template_sub",
-    kolonner=["ID", "Navn", "Type", "Beskrivelse", "Sist brukt", "Rediger", "Slett"],
-    rader=[
-        TableRow(celler=[
-            TableCell(tekst="12", type="int", placeholder="ID"),
-            TableCell(tekst="Standard mal", type="tekst", placeholder="Navn"),
-            TableCell(tekst="Forside", type="tekst", placeholder="Type"),
-            TableCell(tekst="Mal for forsidevisning", type="tekst", placeholder="Beskrivelse"),
-            TableCell(tekst="21.06.2025", type="dato", placeholder="Sist brukt"),
-            TableCell(tekst="", funksjon="Rediger"),
-            TableCell(tekst="", funksjon="Slett")
-        ]),
-        # Flere rader...
-    ]
-)
-sidemal_page = PageModel(
-    navn="Sidemal",
-    url="/admin/template_sub",
-    beskrivelse="Rediger og administrer sidemaler for ulike deler av nettstedet.",
-    meny=main_menu,
-    tabeller=[sidemal_tabell]
-)
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# ------------------- ENDPOINTS -------------------
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    session: AsyncSession = Depends(get_session)
+) -> SiteUser:
+    credentials_exc = HTTPException(
+        status_code=401,
+        detail="Kunne ikke validere legitimasjon",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exc
+    except JWTError:
+        raise credentials_exc
+    user = await get_user(session, username)
+    if user is None:
+        raise credentials_exc
+    return user
+
+# ---------------- AUTH ENDPOINT -----------------
+
+@app.post("/token", response_model=Token, tags=["Auth"])
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: AsyncSession = Depends(get_session)
+):
+    user = await authenticate_user(session, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Ugyldig brukernavn eller passord")
+    access_token = create_access_token(data={"sub": user.userName})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --------------- STRUCTURE ENDPOINTS ---------------
 
 @app.get("/")
 def root():
     return {"message": "ClubSite adminstruktur – se /docs for API-endepunkter og struktur"}
 
-@app.get("/struktur/nyheter", response_model=PageModel, tags=["Struktur"])
-def hent_nyheter():
-    return nyheter_page
+# ... her dine /struktur/*-endepunkter ...
 
-@app.get("/struktur/undersider", response_model=PageModel, tags=["Struktur"])
-def hent_undersider():
-    return undersider_page
+# ---------------- HEALTHCHECK ----------------------
 
-@app.get("/struktur/bilder", response_model=PageModel, tags=["Struktur"])
-def hent_bilder():
-    return bilder_page
+@app.get("/healthcheck", tags=["Health"])
+async def healthcheck(session: AsyncSession = Depends(get_session)):
+    try:
+        await session.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB healthcheck feilet: {e}")
 
-@app.get("/struktur/dokumenter", response_model=PageModel, tags=["Struktur"])
-def hent_dokumenter():
-    return dokumenter_page
+# ---------------- NYHETER ENDPOINTS ----------------
 
-@app.get("/struktur/sidemal", response_model=PageModel, tags=["Struktur"])
-def hent_sidemal():
-    return sidemal_page
+@app.get("/news/", response_model=list[NewsOut], tags=["Nyheter"])
+async def list_news(
+    current_user: SiteUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    stmt = (
+        select(NewsArticle)
+        .where(NewsArticle.boolPubl == True)
+        .order_by(NewsArticle.validfrom.desc())
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
+@app.post("/news/", response_model=NewsOut, tags=["Nyheter"])
+async def create_news(
+    data: NewsIn,
+    current_user: SiteUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    now = datetime.utcnow()
+    new_item = NewsArticle(
+        **data.dict(),
+        boolShow=False,
+        boolPri=False,
+        urlTitle=re.sub(r'[^a-z0-9]+','-', data.heading.strip().lower()).strip('-'),
+        date_created=now,
+        created_by=current_user.userName
+    )
+    session.add(new_item)
+    await session.commit()
+    await session.refresh(new_item)
+    return new_item
+
+@app.put("/news/{article_id}", response_model=NewsOut, tags=["Nyheter"])
+async def update_news(
+    article_id: int,
+    data: NewsIn,
+    current_user: SiteUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(NewsArticle).where(NewsArticle.articleID == article_id))
+    article = result.scalar_one_or_none()
+    if not article:
+        raise HTTPException(status_code=404, detail="Artikkel ikke funnet")
+    for key, value in data.dict(exclude_unset=True).items():
+        setattr(article, key, value)
+    article.date_modified = datetime.utcnow()
+    article.modified_by = current_user.userName
+    await session.commit()
+    await session.refresh(article)
+    return article
+
+@app.delete("/news/{article_id}", status_code=204, tags=["Nyheter"])
+async def delete_news(
+    article_id: int,
+    current_user: SiteUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(select(NewsArticle).where(NewsArticle.articleID == article_id))
+    article = result.scalar_one_or_none()
+    if not article:
+        raise HTTPException(status_code=404, detail="Artikkel ikke funnet")
+    await session.delete(article)
+    await session.commit()
+
+# ---------------- BILDE-UPLOAD ENDPOINTS ----------------
+
+@app.get("/images/archive/", tags=["Bilder"])
+async def list_images(
+    current_user: SiteUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    result = await session.execute(select(NewsArticle.indexImageID, NewsArticle.indexImagePath))
+    return [{"id": id_, "path": path} for id_, path in result.all()]
+
+@app.post("/images/archive/", tags=["Bilder"])
+async def upload_image(
+    file: UploadFile,
+    current_user: SiteUser = Depends(get_current_user)
+):
+    # Lagre filen lokalt
+    upload_dir = "uploads/news/"
+    os.makedirs(upload_dir, exist_ok=True)
+    filename = f"{datetime.utcnow().timestamp()}_{file.filename}"
+    file_path = os.path.join(upload_dir, filename)
+    with open(file_path, "wb") as buffer:
+        buffer.write(await file.read())
+    # I en full implementasjon ville vi lagt metadata i DB
+    return {"filename": file.filename, "path": file_path}

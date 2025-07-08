@@ -1,0 +1,14 @@
+{
+  "name": "fastapi-clubsite",
+  "version": "1.0.0",
+  "description": "ClubSite CMS API documentation generator",
+  "scripts": {
+    "docs:swagger": "node generate-swagger.js",
+    "docs:ui": "xcopy node_modules\\\\swagger-ui-dist docs\\\\swagger-ui /E /I",
+    "docs": "npm run docs:swagger && npm run docs:ui"
+  },
+  "devDependencies": {
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-dist": "^5.26.1"
+  }
+}
