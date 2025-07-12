@@ -1,4 +1,4 @@
-# filepath: .gitignore
+# .gitignore for FastAPI-Clubsite
 node_modules/
 *.pyc
 __pycache__/
