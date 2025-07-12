@@ -1,0 +1,6 @@
+# filepath: .gitignore
+node_modules/
+*.pyc
+__pycache__/
+venv/
+*.sqlite
