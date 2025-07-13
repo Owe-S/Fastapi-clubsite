@@ -1,250 +1,181 @@
 from fastapi import FastAPI, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel
-from typing import List, Optional, AsyncGenerator
-from sqlalchemy import text, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timedelta
-import re
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi_crudrouter import SQLAlchemyCRUDRouter
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from datetime import timedelta
+import inspect
+import logging
+import schemas
+from sqlalchemy import inspect as sa_inspect    # ← add this
 
-import os
-from fastapi import UploadFile
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-
-from database import AsyncSessionLocal
-from models import NewsArticle, SiteUser
-
-# ----------------- APP CONFIG -----------------
+from database import get_session, Base, engine
+from models import (
+    SiteUser,
+    NewsArticle,
+    Activities,
+    ActivitiesDateTime,
+    Images,
+    Images_Categories,
+)
+from auth import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+)
+from schemas import (
+    Token,
+    NewsArticleIn,
+    NewsArticleOut,
+    ActivitiesIn,
+    ActivitiesOut,
+    ActivitiesDateTimeIn,
+    ActivitiesDateTimeOut,
+    ImageIn,
+    ImageOut,
+    ImageCategoryIn,
+    ImageCategoryOut,
+)
+from chatgpt_client import ask_chatgpt
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html, get_redoc_html
+from fastapi.responses import HTMLResponse
 
 app = FastAPI(
     title="ClubSite Admin Struktur API",
-    description="""
-    Komplett API + OAuth2/JWT-autentisering (med midlertidig test-bruker) og CRUD for News.
-    """,
-    version="3.2"
+    openapi_url="/openapi.json",
+    docs_url=None,     # disable default Swagger UI
+    redoc_url=None,    # disable default ReDoc
 )
 
-# ------------- SECURITY CONFIG -----------------
-
-SECRET_KEY = "en-veldig-lang-og-tilfeldig-streng"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# ---------------- Pydantic-modeller --------------
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-class NewsOut(BaseModel):
-    articleID: int
-    heading: str
-    ingress: Optional[str]
-    validfrom: datetime
-    validto: datetime
-    boolPubl: bool
-    author: Optional[str] = None
-    template: Optional[int] = None
-    videoUrl: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-class NewsIn(BaseModel):
-    depID: int
-    heading: str
-    ingress: Optional[str]
-    newscontent: Optional[str]
-    validfrom: datetime
-    validto: datetime
-    boolPubl: bool
-    author: Optional[str] = None
-    template: Optional[int] = None
-    videoUrl: Optional[str] = None
-
-# Struktur-modeller (TableCell, TableRow, TableModel, MenuLink, PageModel) og data…
-# (kopier inn dine eksisterende structure-endepunkter her)
-
-# ----------------- DEPENDENCIES -----------------
-
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        yield session
-
-def verify_password(plain_pw: str, hashed_pw: str) -> bool:
-    return pwd_context.verify(plain_pw, hashed_pw)
-
-async def get_user(session: AsyncSession, username: str) -> Optional[SiteUser]:
-    if username == "API-Test":
-        user = SiteUser()
-        user.userName = "API-Test"
-        return user
-    result = await session.execute(
-        select(SiteUser).where(SiteUser.userName == username)
-    )
-    return result.scalar_one_or_none()
-
-async def authenticate_user(session: AsyncSession, username: str, password: str):
-    if username == "API-Test" and password == "UtvidetTest2025!":
-        return await get_user(session, username)
-    user = await get_user(session, username)
-    if not user or not verify_password(password, user.pwdHash or ""):
-        return None
-    return user
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    session: AsyncSession = Depends(get_session)
-) -> SiteUser:
-    credentials_exc = HTTPException(
-        status_code=401,
-        detail="Kunne ikke validere legitimasjon",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exc
-    except JWTError:
-        raise credentials_exc
-    user = await get_user(session, username)
-    if user is None:
-        raise credentials_exc
-    return user
-
-# ---------------- AUTH ENDPOINT -----------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # or ["*"] for quick-and-dirty
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/token", response_model=Token, tags=["Auth"])
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    session: AsyncSession = Depends(get_session)
-):
-    user = await authenticate_user(session, form_data.username, form_data.password)
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
     if not user:
-        raise HTTPException(status_code=401, detail="Ugyldig brukernavn eller passord")
-    access_token = create_access_token(data={"sub": user.userName})
-    return {"access_token": access_token, "token_type": "bearer"}
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    token = create_access_token(
+        data={"sub": user.userName}, 
+        expires_delta=expires
+    )
+    return {"access_token": token, "token_type": "bearer"}
 
-# --------------- STRUCTURE ENDPOINTS ---------------
+from fastapi.responses import HTMLResponse
 
-@app.get("/")
-def root():
-    return {"message": "ClubSite adminstruktur – se /docs for API-endepunkter og struktur"}
+@app.get("/", include_in_schema=False)
+async def api_index() -> HTMLResponse:
+    """
+    Simple HTML index page linking to /docs, /redoc and all GET routes.
+    """
+    links = [
+        "<li><a href='/docs'>Swagger UI</a></li>",
+        "<li><a href='/redoc'>ReDoc</a></li>"
+    ]
+    for route in app.routes:
+        if "GET" not in route.methods or not route.include_in_schema:
+            continue
+        path = route.path
+        if path in ("/openapi.json", "/docs", "/redoc"):
+            continue
+        links.append(f"<li><a href='{path}'>{path}</a></li>")
 
-# ... her dine /struktur/*-endepunkter ...
-
-# ---------------- HEALTHCHECK ----------------------
+    html = f"""
+    <html>
+      <head><title>{app.title} – Index</title></head>
+      <body>
+        <h1>{app.title}</h1>
+        <ul>
+          {''.join(links)}
+        </ul>
+      </body>
+    </html>
+    """
+    return HTMLResponse(html)
 
 @app.get("/healthcheck", tags=["Health"])
-async def healthcheck(session: AsyncSession = Depends(get_session)):
+def healthcheck(session: Session = Depends(get_session)):
     try:
-        await session.execute(text("SELECT 1"))
+        session.execute(text("SELECT 1"))
         return {"status": "ok"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB healthcheck feilet: {e}")
+        raise HTTPException(status_code=500, detail=f"DB feilet: {e}")
 
-# ---------------- NYHETER ENDPOINTS ----------------
+@app.get("/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
+async def chat(q: str):
+    reply = ask_chatgpt(q)
+    return {"reply": reply}
 
-@app.get("/news/", response_model=list[NewsOut], tags=["Nyheter"])
-async def list_news(
-    current_user: SiteUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
-):
-    stmt = (
-        select(NewsArticle)
-        .where(NewsArticle.boolPubl == True)
-        .order_by(NewsArticle.validfrom.desc())
+# initialize basic logger for console output
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logging.info("🔍 Auto-wiring models → CRUD routers…")
+
+# Dynamically register CRUD for every model–schema pair
+for name, model in inspect.getmembers(__import__("models"), inspect.isclass):
+    if not hasattr(model, "__tablename__"):
+        logging.debug(f"• Skipping {name}: no __tablename__")
+        continue
+
+    has_in  = hasattr(schemas, f"{name}In")
+    has_out = hasattr(schemas, f"{name}Out")
+    if not (has_in and has_out):
+        logging.warning(f"• Skipping {name}: missing schemas {name}In/Out")
+        continue
+
+    # quick mapping check
+    try:
+        sa_inspect(model)
+    except Exception as err:
+        logging.error(f"• Skipping {name}: mapping error → {err}")
+        continue
+
+    prefix = model.__tablename__.lower()
+    tag    = prefix.capitalize()
+    logging.info(f"• Registering CRUD for {name} at /{prefix}")
+
+    app.include_router(
+        SQLAlchemyCRUDRouter(
+            db_model      = model,
+            db            = get_session,
+            prefix        = prefix,
+            tags          = [tag],
+            schema        = getattr(schemas, f"{name}Out"),
+            create_schema = getattr(schemas, f"{name}In"),
+            dependencies  = [Depends(get_current_user)],
+        )
     )
-    result = await session.execute(stmt)
-    return result.scalars().all()
 
-@app.post("/news/", response_model=NewsOut, tags=["Nyheter"])
-async def create_news(
-    data: NewsIn,
-    current_user: SiteUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
-):
-    now = datetime.utcnow()
-    new_item = NewsArticle(
-        **data.dict(),
-        boolShow=False,
-        boolPri=False,
-        urlTitle=re.sub(r'[^a-z0-9]+','-', data.heading.strip().lower()).strip('-'),
-        date_created=now,
-        created_by=current_user.userName
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} – Swagger UI",
+        swagger_ui_parameters={
+            "docExpansion": "none",
+            "tagsSorter": "alpha",
+            "operationsSorter": "alpha",
+        },
     )
-    session.add(new_item)
-    await session.commit()
-    await session.refresh(new_item)
-    return new_item
 
-@app.put("/news/{article_id}", response_model=NewsOut, tags=["Nyheter"])
-async def update_news(
-    article_id: int,
-    data: NewsIn,
-    current_user: SiteUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    result = await session.execute(select(NewsArticle).where(NewsArticle.articleID == article_id))
-    article = result.scalar_one_or_none()
-    if not article:
-        raise HTTPException(status_code=404, detail="Artikkel ikke funnet")
-    for key, value in data.dict(exclude_unset=True).items():
-        setattr(article, key, value)
-    article.date_modified = datetime.utcnow()
-    article.modified_by = current_user.userName
-    await session.commit()
-    await session.refresh(article)
-    return article
+@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+async def swagger_oauth2_redirect() -> HTMLResponse:
+    return get_swagger_ui_oauth2_redirect_html()
 
-@app.delete("/news/{article_id}", status_code=204, tags=["Nyheter"])
-async def delete_news(
-    article_id: int,
-    current_user: SiteUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    result = await session.execute(select(NewsArticle).where(NewsArticle.articleID == article_id))
-    article = result.scalar_one_or_none()
-    if not article:
-        raise HTTPException(status_code=404, detail="Artikkel ikke funnet")
-    await session.delete(article)
-    await session.commit()
-
-# ---------------- BILDE-UPLOAD ENDPOINTS ----------------
-
-@app.get("/images/archive/", tags=["Bilder"])
-async def list_images(
-    current_user: SiteUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
-):
-    result = await session.execute(select(NewsArticle.indexImageID, NewsArticle.indexImagePath))
-    return [{"id": id_, "path": path} for id_, path in result.all()]
-
-@app.post("/images/archive/", tags=["Bilder"])
-async def upload_image(
-    file: UploadFile,
-    current_user: SiteUser = Depends(get_current_user)
-):
-    # Lagre filen lokalt
-    upload_dir = "uploads/news/"
-    os.makedirs(upload_dir, exist_ok=True)
-    filename = f"{datetime.utcnow().timestamp()}_{file.filename}"
-    file_path = os.path.join(upload_dir, filename)
-    with open(file_path, "wb") as buffer:
-        buffer.write(await file.read())
-    # I en full implementasjon ville vi lagt metadata i DB
-    return {"filename": file.filename, "path": file_path}
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} – ReDoc",
+    )

@@ -10,5 +10,8 @@
   "devDependencies": {
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-dist": "^5.26.1"
+  },
+  "dependencies": {
+    "openai": "^5.9.0"
   }
 }

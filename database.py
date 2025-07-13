@@ -1,46 +1,37 @@
-# database.py
-
 import os
-import urllib.parse
+import urllib
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# 1) Last inn miljøvariabler
 load_dotenv()
 
-DB_USER   = os.getenv("DB_USER")
-DB_PASS   = os.getenv("DB_PASS")
-DB_HOST   = os.getenv("DB_HOST")
-DB_NAME   = os.getenv("DB_NAME")
-DB_DRIVER = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
+# Read an ODBC string from .env (RAW, exactly as you’d use in a DSN)
+# Example you can add to your .env (no URL-encoding here):
+#
+# READWRITE_ODBC_CONN="Driver={ODBC Driver 18 for SQL Server};Server=89.221.242.124,1433;Database=CS4-ORIGINAL;UID=owestest;PWD=hhdtR53rs6jDser5;Encrypt=yes;TrustServerCertificate=yes;Application Intent=ReadWrite;"
+#
+odbc_conn = os.getenv("READWRITE_ODBC_CONN", "")
 
-# 2) Lag full ODBC-connect-string med kryptering av og tillat usikrede certs
-odbc_str = (
-    f"DRIVER={DB_DRIVER};"
-    f"SERVER={DB_HOST};"
-    f"DATABASE={DB_NAME};"
-    f"UID={DB_USER};"
-    f"PWD={DB_PASS};"
-    "Encrypt=no;"
-    "TrustServerCertificate=yes;"
-)
-# URL-enkode
-connect_str = urllib.parse.quote_plus(odbc_str)
+if odbc_conn:
+    # quote the entire ODBC string and let SQLAlchemy+pyodbc consume via odbc_connect
+    params = urllib.parse.quote_plus(odbc_conn)
+    DATABASE_URL = f"mssql+pyodbc:///?odbc_connect={params}"
+    connect_args = {}  # SQL Server does not need special args here
+else:
+    # dummy in‐memory fallback
+    DATABASE_URL = "sqlite:///./clubsite.db"
+    connect_args = {"check_same_thread": False}
 
-# 3) Bruk odbc_connect for å være sikker på at alle attributter plukkes opp
-DATABASE_URL = f"mssql+aioodbc:///?odbc_connect={connect_str}"
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-# 4) Opprett AsyncEngine
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,   # sett True hvis du vil se SQL i logg
-    future=True
-)
+Base = declarative_base()
 
-# 5) Session-factory som injiseres i FastAPI
-AsyncSessionLocal = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+def get_session():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
