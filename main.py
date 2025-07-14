@@ -45,8 +45,8 @@ from fastapi.responses import HTMLResponse
 app = FastAPI(
     title="ClubSite Admin Struktur API",
     openapi_url="/openapi.json",
-    docs_url=None,     # disable default Swagger UI
-    redoc_url=None,    # disable default ReDoc
+    docs_url=None,      # lar oss styre swagger‐UI manuelt
+    redoc_url=None,
 )
 
 app.add_middleware(
@@ -73,50 +73,56 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     )
     return {"access_token": token, "token_type": "bearer"}
 
-from fastapi.responses import HTMLResponse
+# ---- fjern ALT av denne duplikaten ----
+# @app.get("/", include_in_schema=False)
+# async def api_index() -> HTMLResponse:
+#     …
 
+# --- la kun én root‐endpoint stå igjen: meny for dokumentasjon ---
 @app.get("/", include_in_schema=False)
-async def api_index() -> HTMLResponse:
-    """
-    Simple HTML index page linking to /docs, /redoc and all GET routes.
-    """
-    links = [
-        "<li><a href='/docs'>Swagger UI</a></li>",
-        "<li><a href='/redoc'>ReDoc</a></li>"
-    ]
-    for route in app.routes:
-        if "GET" not in route.methods or not route.include_in_schema:
-            continue
-        path = route.path
-        if path in ("/openapi.json", "/docs", "/redoc"):
-            continue
-        links.append(f"<li><a href='{path}'>{path}</a></li>")
-
-    html = f"""
-    <html>
-      <head><title>{app.title} – Index</title></head>
+async def docs_index() -> HTMLResponse:
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8"/>
+        <title>API Documentation Index</title>
+      </head>
       <body>
-        <h1>{app.title}</h1>
+        <h1>API Documentation</h1>
         <ul>
-          {''.join(links)}
+          <li><a href="/docs">Swagger UI</a></li>
+          <li><a href="/redoc">ReDoc</a></li>
+          <li><a href="/openapi.json">OpenAPI JSON</a></li>
         </ul>
       </body>
     </html>
-    """
-    return HTMLResponse(html)
+    """)
 
-@app.get("/healthcheck", tags=["Health"])
-def healthcheck(session: Session = Depends(get_session)):
-    try:
-        session.execute(text("SELECT 1"))
-        return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB feilet: {e}")
+# dynamisk Swagger‐UI
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} – Swagger UI",
+        swagger_ui_parameters={
+            "docExpansion": "none",
+            "tagsSorter": "alpha",
+            "operationsSorter": "alpha",
+        },
+    )
 
-@app.get("/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
-async def chat(q: str):
-    reply = ask_chatgpt(q)
-    return {"reply": reply}
+@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
+async def swagger_oauth2_redirect() -> HTMLResponse:
+    return get_swagger_ui_oauth2_redirect_html()
+
+# dynamisk ReDoc
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} – ReDoc",
+    )
 
 # initialize basic logger for console output
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -155,27 +161,4 @@ for name, model in inspect.getmembers(__import__("models"), inspect.isclass):
             create_schema = getattr(schemas, f"{name}In"),
             dependencies  = [Depends(get_current_user)],
         )
-    )
-
-@app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui() -> HTMLResponse:
-    return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
-        title=f"{app.title} – Swagger UI",
-        swagger_ui_parameters={
-            "docExpansion": "none",
-            "tagsSorter": "alpha",
-            "operationsSorter": "alpha",
-        },
-    )
-
-@app.get(app.swagger_ui_oauth2_redirect_url, include_in_schema=False)
-async def swagger_oauth2_redirect() -> HTMLResponse:
-    return get_swagger_ui_oauth2_redirect_html()
-
-@app.get("/redoc", include_in_schema=False)
-async def redoc_html() -> HTMLResponse:
-    return get_redoc_html(
-        openapi_url=app.openapi_url,
-        title=f"{app.title} – ReDoc",
     )
