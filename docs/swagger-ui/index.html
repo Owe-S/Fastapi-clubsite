@@ -17,7 +17,7 @@
     <script>
       window.onload = function() {
         const ui = SwaggerUIBundle({
-          url: "./openapi.json",
+          url: "./swagger.json", // Endret fra openapi.json til swagger.json
           dom_id: "#swagger-ui",
           deepLinking: true,
           docExpansion: "none", // Collapse all endpoints by default
@@ -36,7 +36,7 @@
                       <div style="margin: 20px; padding: 15px; border: 1px solid #ccc; background-color: #f9f9f9;">
                         <h2>Beskrivelse</h2>
                         <p>
-                          Nettsiden <a href="https://owe-s.github.io/Fastapi-clubsite/swagger-ui/index.html">https://owe-s.github.io/Fastapi-clubsite/swagger-ui/index.html</a> viser en interaktiv API-dokumentasjon for ClubSite Admin Struktur API. Den benytter Swagger UI og henter definisjonen fra <code>openapi.json</code>.
+                          Nettsiden <a href="https://owe-s.github.io/Fastapi-clubsite/swagger-ui/index.html">https://owe-s.github.io/Fastapi-clubsite/swagger-ui/index.html</a> viser en interaktiv API-dokumentasjon for ClubSite Admin Struktur API. Den benytter Swagger UI og henter definisjonen fra <code>swagger.json</code>.
                         </p>
                         <p>Swagger gir utviklere og integratorer mulighet til å:</p>
                         <ul>
