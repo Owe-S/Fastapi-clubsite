@@ -1,0 +1,170 @@
+# Dokumentasjon for installasjon og tilgjengeliggjøring av REST-API på ASP-server
+
+## 1. Introduksjon
+Dette dokumentet beskriver hvordan REST-API-endepunktene skal settes opp og integreres med SQL-serveren på `clubsite.no`. Målet er å gjøre API-et tilgjengelig for CRUD-operasjoner (Create, Read, Update, Delete) via appen og administrasjonssystemet.
+
+---
+
+## 2. Forberedelser
+### Krav til serveren:
+- **ASP.NET Core Hosting Bundle** må være installert.
+- SQL-serveren må være tilgjengelig med riktig tilkoblingsstreng.
+- IIS (Internet Information Services) må være konfigurert for å hoste API-et.
+
+### Krav til prosjektet:
+- Et ASP.NET Core Web API-prosjekt med følgende:
+  - Datamodeller som representerer SQL-tabellene.
+  - `DbContext` for databaseoperasjoner.
+  - REST-endepunkter for CRUD-operasjoner.
+
+---
+
+## 3. Oppsett av API
+### Opprett ASP.NET Core-prosjekt
+1. Opprett et nytt Web API-prosjekt:
+   ```bash
+   dotnet new webapi -n ClubSiteAPI
+   cd ClubSiteAPI
+   ```
+
+2. Installer nødvendige pakker:
+   ```bash
+   dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+   dotnet add package Microsoft.EntityFrameworkCore.Tools
+   ```
+
+### Konfigurer databaseforbindelsen
+Legg til tilkoblingsstrengen i `appsettings.json`:
+```json
+{
+  "ConnectionStrings": {
+    "ClubSiteDb": "Server=your-sql-server-url;Database=ClubSiteDb;User Id=your-username;Password=your-password;"
+  }
+}
+```
+
+### Opprett datamodeller
+Eksempel på en datamodell:
+```csharp
+public class Activity
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public DateTime Date { get; set; }
+    public int Participants { get; set; }
+}
+```
+
+### Opprett DbContext
+Lag en `DbContext`-klasse:
+```csharp
+using Microsoft.EntityFrameworkCore;
+
+public class ClubSiteDbContext : DbContext
+{
+    public ClubSiteDbContext(DbContextOptions<ClubSiteDbContext> options) : base(options) { }
+
+    public DbSet<Activity> Activities { get; set; }
+}
+```
+
+### Konfigurer DbContext i `Program.cs`
+Legg til `DbContext`:
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<ClubSiteDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("ClubSiteDb")));
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+
+app.MapControllers();
+
+app.Run();
+```
+
+### Opprett REST-endepunkter
+Eksempel på en controller:
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class ActivitiesController : ControllerBase
+{
+    private readonly ClubSiteDbContext _context;
+
+    public ActivitiesController(ClubSiteDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll()
+    {
+        var activities = await _context.Activities.ToListAsync();
+        return Ok(activities);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create(Activity activity)
+    {
+        _context.Activities.Add(activity);
+        await _context.SaveChangesAsync();
+        return CreatedAtAction(nameof(GetAll), new { id = activity.Id }, activity);
+    }
+}
+```
+
+---
+
+## 4. Publisering til server
+### Bygg prosjektet
+Bygg prosjektet for produksjon:
+```bash
+dotnet publish -c Release -o ./publish
+```
+
+### Kopier til serveren
+Last opp innholdet i `./publish`-mappen til serveren, f.eks. `/var/www/api.clubsite.no`.
+
+### Konfigurer IIS
+1. Opprett et nytt nettsted i IIS som peker til den opplastede mappen.
+2. Sørg for at ASP.NET Core Hosting Bundle er installert.
+
+---
+
+## 5. Testing
+- Naviger til `http://api.clubsite.no/api/activities` for å teste endepunktene.
+- Bruk Swagger UI for interaktiv testing hvis det er lagt til.
+
+---
+
+## 6. Integrasjon med appen
+Appen kan sende HTTP-forespørsler til API-endepunktene for å utføre CRUD-operasjoner. Eksempel:
+```javascript
+fetch('http://api.clubsite.no/api/activities', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Ny aktivitet', date: '2025-07-28', participants: 10 })
+});
+```
+
+---
+
+## 7. Feilsøking
+Hvis noe går galt:
+- Sjekk serverens logger:
+  ```bash
+  journalctl -u fastapi
+  ```
+- Sjekk IIS-konfigurasjonen og tilkoblingsstrengen.
+
+---
+
+## 8. Dokumentasjon
+For detaljer om API-struktur og funksjonalitet, se `clubsite_admin_struktur.json`. Dette inneholder informasjon om endepunkter, tabellkolonner, søkevalg, handlinger og beskrivelse for hver modul.
+
+---
+
+Hvis du trenger ytterligere hjelp, gi beskjed! 😊
