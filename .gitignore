@@ -1,0 +1,6 @@
+# .gitignore for FastAPI-Clubsite
+node_modules/
+*.pyc
+__pycache__/
+venv/
+*.sqlite
