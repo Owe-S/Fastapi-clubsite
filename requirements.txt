@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+fastapi==0.116.1
+uvicorn==0.22.0
+pydantic==2.8.0
+=======
 fastapi
 uvicorn[standard]
 sqlalchemy
@@ -7,3 +12,4 @@ python-multipart
 passlib[bcrypt]
 python-jose[bcrypt]
 bcrypt
+>>>>>>> 913c8f343c976e70c42f5237bb48b73aefda84fd
